@@ -18,6 +18,7 @@ export const useEventStore = defineStore('event', {
     athletes: [], matches: [], entries: [], medals: [], overview: null,
     standings: {}, registrations: [], quota: [], loaded: false,
     assignments: [], assignmentLogs: [], conflicts: null, workload: [], appeals: [],
+    incidents: [],
     badges: [], staff: [], checkins: [], accessLogs: [], matchAccess: []
   }),
   getters: {
@@ -34,11 +35,11 @@ export const useEventStore = defineStore('event', {
         j('/api/athletes'), j('/api/matches'), j('/api/entries'), j('/api/medals'), j('/api/overview'),
         j('/api/registrations'), j('/api/quota'),
         j('/api/assignments'), j('/api/assignment-logs?limit=80'), j('/api/conflicts'), j('/api/referee-workload'),
-        j('/api/appeals'),
+        j('/api/appeals'), j('/api/incidents'),
         j('/api/badges'), j('/api/staff'), j('/api/access/checkins?limit=120'), j('/api/access/logs?limit=120'),
         j('/api/access/matches?status=scheduled')
       ])
-      Object.assign(this, { sports, teams, units, venues, referees, athletes, matches, entries, medals, overview, registrations, quota, assignments, assignmentLogs: logs, conflicts, workload, appeals, badges, staff, checkins, accessLogs, matchAccess })
+      Object.assign(this, { sports, teams, units, venues, referees, athletes, matches, entries, medals, overview, registrations, quota, assignments, assignmentLogs: logs, conflicts, workload, appeals, incidents, badges, staff, checkins, accessLogs, matchAccess })
       const st = {}
       for (const s of sports) st[s.id] = await j('/api/standings/' + s.id)
       this.standings = st
@@ -49,11 +50,11 @@ export const useEventStore = defineStore('event', {
         j('/api/matches'), j('/api/entries'), j('/api/medals'), j('/api/overview'),
         j('/api/registrations'), j('/api/quota'), j('/api/teams'), j('/api/athletes'),
         j('/api/assignments'), j('/api/assignment-logs?limit=80'), j('/api/conflicts'), j('/api/referee-workload'), j('/api/referees'),
-        j('/api/appeals'),
+        j('/api/appeals'), j('/api/incidents'),
         j('/api/badges'), j('/api/staff'), j('/api/access/checkins?limit=120'), j('/api/access/logs?limit=120'),
         j('/api/access/matches?status=scheduled')
       ])
-      Object.assign(this, { matches, entries, medals, overview, registrations, quota, teams, athletes, assignments, assignmentLogs: logs, conflicts, workload, referees, appeals, badges, staff, checkins, accessLogs, matchAccess })
+      Object.assign(this, { matches, entries, medals, overview, registrations, quota, teams, athletes, assignments, assignmentLogs: logs, conflicts, workload, referees, appeals, incidents, badges, staff, checkins, accessLogs, matchAccess })
       const st = {}
       for (const s of this.sports) st[s.id] = await j('/api/standings/' + s.id)
       this.standings = st
@@ -84,6 +85,18 @@ export const useEventStore = defineStore('event', {
     async rejectAppeal(id, note, reviewer) { const r = await j('/api/appeals/' + id + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note, reviewer }) }); await this.refresh(); return r },
     async withdrawAppeal(id, note) { const r = await j('/api/appeals/' + id + '/withdraw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) }); await this.refresh(); return r },
     async upholdAppeal(id, payload) { const r = await j('/api/appeals/' + id + '/uphold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    // —— 赛事安全事件处置 ——
+    async reportIncident(payload) { const r = await j('/api/incidents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async triageIncident(id, payload) { const r = await j('/api/incidents/' + id + '/triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async progressIncident(id, payload) { const r = await j('/api/incidents/' + id + '/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async incidentBlockBadge(id, payload) { const r = await j('/api/incidents/' + id + '/badges', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async incidentReleaseBadge(id, linkId, payload) { const r = await j('/api/incidents/' + id + '/badges/' + linkId + '/release', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async incidentPause(id, payload) { const r = await j('/api/incidents/' + id + '/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async incidentResume(id, payload) { const r = await j('/api/incidents/' + id + '/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async incidentReschedule(id, payload) { const r = await j('/api/incidents/' + id + '/reschedule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async resolveIncident(id, payload) { const r = await j('/api/incidents/' + id + '/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async reopenIncident(id, payload) { const r = await j('/api/incidents/' + id + '/reopen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
+    async closeIncident(id, payload) { const r = await j('/api/incidents/' + id + '/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
     // —— 赛事证件与入场核验 ——
     async verifyAccess(payload) { const r = await j('/api/access/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await this.refresh(); return r },
     async blockBadge(id, reason) { const r = await j('/api/badges/' + id + '/block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) }); await this.refresh(); return r },

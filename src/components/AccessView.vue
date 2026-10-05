@@ -18,7 +18,7 @@ const RESULT_META = {
 const REASON_TEXT = {
   BADGE_NOT_FOUND: '证件不存在', BADGE_BLOCKED: '证件停用/暂扣', INELIGIBLE: '资格失效',
   NO_FIXTURE: '无本场赛程', WRONG_VENUE: '场地不符', NOT_ASSIGNED: '无执法排班',
-  MATCH_NOT_PLAYABLE: '场次不可入场', DUPLICATE: '重复核验'
+  MATCH_NOT_PLAYABLE: '场次不可入场', MATCH_PAUSED: '场次安全暂停', DUPLICATE: '重复核验'
 }
 const STAFF_ROLES = ['场地主管', '医疗', '安保', '器材', '志愿者', '媒体']
 
@@ -131,7 +131,9 @@ const LOG_META = {
   issue: { text: '发证', tag: 'b' }, sync: { text: '同步', tag: 'gray' },
   block: { text: '暂扣', tag: 'r' }, unblock: { text: '解除暂扣', tag: 'g' },
   deny: { text: '拒绝入场', tag: 'r' }, force_pass: { text: '强制放行', tag: 'y' },
-  pass: { text: '放行', tag: 'g' }
+  pass: { text: '放行', tag: 'g' },
+  incident_pause: { text: '事件暂停', tag: 'r' }, incident_resume: { text: '事件恢复', tag: 'g' },
+  incident_reschedule: { text: '事件改期', tag: 'y' }
 }
 
 const access = computed(() => store.overview?.access || {})
@@ -182,7 +184,7 @@ const matchBrief = id => {
               <label>核验场次</label>
               <select v-model="gateForm.match_id" @change="pickMatch(gateForm.match_id)" style="flex:1">
                 <option value="">不指定（按赛程自动匹配）</option>
-                <option v-for="m in gateMatches" :key="m.match_id" :value="m.match_id">{{ m.title }}</option>
+                <option v-for="m in gateMatches" :key="m.match_id" :value="m.match_id">{{ m.is_paused ? '⏸️ ' : '' }}{{ m.title }}</option>
               </select>
             </div>
             <div class="form-row">
@@ -330,11 +332,15 @@ const matchBrief = id => {
       <div class="card">
         <div class="caption"><span>🏟️ 各场次到场与到岗情况</span><span class="hint">核验结果实时回写比赛：双方到场 · 执法到岗 · 异常拦截</span></div>
         <div class="pad" style="display:flex;flex-direction:column;gap:12px">
-          <div v-for="m in store.matchAccess" :key="m.match_id" class="mcard" :class="{ done: m.status === 'finished' }">
+          <div v-for="m in store.matchAccess" :key="m.match_id" class="mcard" :class="{ done: m.status === 'finished', paused: m.is_paused }">
             <div class="mheader">
               <span><b>{{ m.title }}</b></span>
-              <span>⏱ {{ m.time_label }} · 📍 {{ m.venue }}<span class="tag" :class="m.status === 'finished' ? 'g' : 'o'" style="margin-left:8px">{{ m.status === 'finished' ? '已完赛' : '待赛' }}</span></span>
+              <span>⏱ {{ m.time_label }} · 📍 {{ m.venue }}
+                <span v-if="m.is_paused" class="tag r" style="margin-left:8px">⏸️ 安全事件暂停{{ m.pause_incident_code ? '（' + m.pause_incident_code + '）' : '' }}</span>
+                <span v-else class="tag" :class="m.status === 'finished' ? 'g' : 'o'" style="margin-left:8px">{{ m.status === 'finished' ? '已完赛' : '待赛' }}</span>
+              </span>
             </div>
+            <div v-if="m.is_paused" class="pause-tip">🚑 {{ m.pause_reason || '该场次因安全事件暂停' }}，入场核验与比分录入已锁定，恢复或改期后自动放行</div>
             <div class="att-grid">
               <div class="att-item">
                 <span class="tag" :class="m.team_a.checked_in ? 'g' : 'o'">{{ m.team_a.checked_in ? '✅ 已到场' : '⏳ 未到场' }}</span>
@@ -440,6 +446,8 @@ const matchBrief = id => {
 .blockedrow { background: #fff8f8; }
 .blockedrow td { color: var(--muted); }
 .dangerrow { background: #fff8f8; }
+.paused { border-color: #f0a1a1 !important; background: linear-gradient(180deg,#fff8f8,#fff) !important; }
+.pause-tip { margin-top: 8px; font-size: 12px; color: #b3186e; background: #fff0f6; border: 1px solid #f3c9dd; border-radius: 8px; padding: 6px 10px; }
 .mini { background: #fff; border: 1px solid var(--line); border-radius: 7px; font-size: 11px; padding: 2px 7px; color: var(--muted); }
 .mini:hover { border-color: var(--accent); color: var(--accent); }
 .mini.danger:hover { border-color: #e5484d; color: #e5484d; }

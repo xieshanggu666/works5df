@@ -85,6 +85,31 @@ const REASON_LABEL = {
   MATCH_NOT_PLAYABLE: '场次已完赛/取消', DUPLICATE: '重复核验', UNKNOWN: '其他'
 }
 const matchAdmissionRows = computed(() => store.matchAccess)
+
+// —— 安全事件处置审计 ——
+const incidentStat = computed(() => {
+  const c = { pending: 0, handling: 0, resolved: 0, closed: 0, major: 0 }
+  store.incidents.forEach(i => {
+    c[i.status] = (c[i.status] || 0) + 1
+    if (i.severity === 'major' && i.status !== 'closed') c.major++
+  })
+  return c
+})
+const INC_CAT_LABEL = { injury: '🩺 伤病急救', security: '🚨 治安事件', dispute: '🥊 冲突纠纷', facility: '🛠️ 场地器材', weather: '🌩️ 天气突发', other: '📌 其他' }
+const INC_STATUS_LABEL = { pending: '待分级', handling: '处置中', resolved: '待结案', closed: '已结案' }
+const INC_STATUS_TAG = { pending: 'o', handling: 'r', resolved: 'y', closed: 'g' }
+function incidentImpact(i) {
+  const im = i.impact
+  if (!im) return '—'
+  const p = []
+  const block = im.badges_blocked + im.badges_released
+  if (block) p.push(`证件暂扣/解除 ${im.badges_blocked}/${im.badges_released}`)
+  const paused = im.matches_paused + im.matches_resumed
+  if (paused) p.push(`暂停/恢复 ${im.matches_paused}/${im.matches_resumed} 场`)
+  if (im.matches_rescheduled) p.push(`改期 ${im.matches_rescheduled} 场`)
+  return p.length ? p.join('；') : '现场处置（无联动）'
+}
+const pausedMatches = computed(() => store.matches.filter(m => m.is_paused))
 </script>
 
 <template>
@@ -211,6 +236,36 @@ const matchAdmissionRows = computed(() => store.matchAccess)
           </tbody>
         </table>
         <div v-if="!store.appeals.length" class="empty">暂无申诉记录</div>
+      </div>
+    </div>
+
+    <!-- 安全事件处置审计 -->
+    <div class="card mt">
+      <div class="caption">🚑 赛事安全事件处置审计 <span class="hint">医疗/安保/裁判/组委会协同 · 证件暂扣 · 场次暂停改期 · 全量留痕</span></div>
+      <div class="pad">
+        <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="tag o">待分级 {{ incidentStat.pending }}</span>
+          <span class="tag r">处置中 {{ incidentStat.handling }}</span>
+          <span class="tag y">待结案 {{ incidentStat.resolved }}</span>
+          <span class="tag g">已结案 {{ incidentStat.closed }}</span>
+          <span v-if="incidentStat.major" class="tag r">🔴 未结重大 {{ incidentStat.major }}</span>
+          <span v-if="pausedMatches.length" class="tag r">⏸️ 暂停中场次 {{ pausedMatches.length }}</span>
+        </div>
+        <table>
+          <thead><tr><th>编号</th><th>类型/等级</th><th>事件摘要</th><th>场地/场次</th><th>状态</th><th>联动处置</th><th>结案总结</th></tr></thead>
+          <tbody>
+            <tr v-for="i in store.incidents.slice(0, 14)" :key="i.id">
+              <td class="mono" style="font-weight:800;color:var(--accent3)">{{ i.code }}</td>
+              <td>{{ INC_CAT_LABEL[i.category] }}<div v-if="i.severity" :class="'tag ' + (i.severity === 'major' ? 'r' : i.severity === 'general' ? 'y' : 'b')" style="margin-top:3px">{{ { major: '重大', general: '较大', minor: '一般' }[i.severity] }}</div></td>
+              <td class="ph" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.description }}</td>
+              <td class="ph" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ [i.venue?.name, i.match ? i.match.teamA?.name + 'VS' + i.match.teamB?.name : ''].filter(Boolean).join(' · ') || '—' }}</td>
+              <td><span class="tag" :class="INC_STATUS_TAG[i.status]">{{ INC_STATUS_LABEL[i.status] }}</span></td>
+              <td class="ph" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ incidentImpact(i) }}</td>
+              <td class="ph" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ i.close_summary || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="!store.incidents.length" class="empty">暂无安全事件记录</div>
       </div>
     </div>
 

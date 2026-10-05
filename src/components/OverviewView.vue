@@ -19,6 +19,11 @@ function appealBrief(a) {
   if (a.target_type === 'track') return `${t.aname} ${t.mark}s（第${t.rank}名）`
   return `「${t.name}」的参赛资格`
 }
+
+const INC_STATUS = { pending: 'o', handling: 'r', resolved: 'y', closed: 'g' }
+const INC_STATUS_TEXT = { pending: '待分级', handling: '处置中', resolved: '待结案', closed: '已结案' }
+const INC_CAT = { injury: '🩺 伤病急救', security: '🚨 治安事件', dispute: '🥊 冲突纠纷', facility: '🛠️ 场地器材', weather: '🌩️ 天气突发', other: '📌 其他' }
+const incidentList = computed(() => store.incidents.filter(i => i.status !== 'closed').slice(0, 4))
 </script>
 
 <template>
@@ -65,6 +70,37 @@ function appealBrief(a) {
             <span class="t"><span class="badge"><span class="dot" :style="{ background: store.unitOfUid(a.unit_id)?.color }"></span>{{ a.unit?.name }}</span> 对 <b>{{ appealBrief(a) }}</b> 提出异议</span>
           </div>
           <div class="ph" style="font-size:12px;margin-top:2px">💬 {{ a.reason }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安全事件速览 -->
+    <div class="card mt" v-if="ov.incidents">
+      <div class="caption">🚑 赛事安全事件处置 <span class="hint">待分级 {{ ov.incidents.pending }} · 处置中 {{ ov.incidents.handling }} · 待结案 {{ ov.incidents.resolved }} · 暂停中场次 {{ ov.incidents.paused_matches }} · 事件暂扣证件 {{ ov.incidents.blocked_by_incident }}</span></div>
+      <div class="pad" style="display:flex;flex-direction:column;gap:10px">
+        <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:2px">
+          <span v-if="ov.incidents.major_open" class="tag r">🔴 未结重大事件 {{ ov.incidents.major_open }}</span>
+          <span v-if="ov.incidents.general_open" class="tag y">🟠 未结较大事件 {{ ov.incidents.general_open }}</span>
+          <span class="tag gray">四方协同：医疗 · 安保 · 裁判 · 组委会</span>
+        </div>
+        <div v-if="!incidentList.length" class="empty" style="padding:14px">暂无未结安全事件</div>
+        <div v-for="i in incidentList" :key="i.id" class="mcard" :class="{ major: i.severity === 'major' }">
+          <div class="mheader">
+            <span><b class="mono" style="color:var(--accent3)">{{ i.code }}</b> · {{ INC_CAT[i.category] }}<span v-if="i.severity === 'major'" class="tag r" style="margin-left:6px">重大</span></span>
+            <span class="tag" :class="INC_STATUS[i.status]">{{ INC_STATUS_TEXT[i.status] }}</span>
+          </div>
+          <div class="ph" style="font-size:12.5px;margin-top:2px">💬 {{ i.description }}</div>
+          <div class="mrow">
+            <span class="t ph" style="font-size:11.5px">
+              <span v-if="i.venue">📍 {{ i.venue.name }}</span>
+              <span v-if="i.match" style="margin-left:8px">🏟️ {{ i.match.teamA?.name }} VS {{ i.match.teamB?.name }}</span>
+            </span>
+            <span class="row" style="gap:4px">
+              <span v-if="i.impact?.badges_blocked" class="tag r">🪪 暂扣 {{ i.impact.badges_blocked }}</span>
+              <span v-if="store.matches.some(m => m.pause_incident_id === i.id && m.is_paused)" class="tag r">⏸️ 场次暂停中</span>
+              <span v-else-if="i.impact?.matches_rescheduled" class="tag y">📅 改期 {{ i.impact.matches_rescheduled }} 场</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -129,4 +165,5 @@ function appealBrief(a) {
 .mini-stat { background: var(--bg2); border-radius: 12px; padding: 11px 14px; display: flex; flex-direction: column; gap: 6px; }
 .mini-stat span { font-size: 12px; color: var(--muted); font-weight: 600; }
 .mini-stat b { font-size: 17px; }
+.mcard.major { border-color: #f0a1c5; box-shadow: 0 0 0 2px rgba(179,24,110,.1), var(--shadow-sm); }
 </style>

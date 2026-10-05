@@ -90,9 +90,9 @@ async function submitSchedule(force = false) {
           </div>
         </div>
         <div class="pad" style="display:flex;flex-direction:column;gap:10px;max-height:520px;overflow:auto">
-          <div v-for="m in list.filter(x=>x.sport_id===s.id).sort((a,b)=>a.order_no-b.order_no)" :key="m.id" class="mcard" :class="{ done: m.status==='finished' }">
+          <div v-for="m in list.filter(x=>x.sport_id===s.id).sort((a,b)=>a.order_no-b.order_no)" :key="m.id" class="mcard" :class="{ done: m.status==='finished', paused: m.is_paused }">
             <div class="mheader">
-              <span><span class="tag" :class="m.status==='finished' ? '' : m.status==='void' ? 'r' : 'o'">{{ m.stage }}{{ m.group_name ? ' · ' + m.group_name : '' }}</span></span>
+              <span><span class="tag" :class="m.status==='finished' ? '' : m.status==='void' ? 'r' : 'o'">{{ m.stage }}{{ m.group_name ? ' · ' + m.group_name : '' }}</span><span v-if="m.is_paused" class="tag r" style="margin-left:6px">⏸️ 安全暂停</span></span>
               <span>⏱ {{ m.time_label }}</span>
             </div>
             <div class="mrow">
@@ -103,12 +103,14 @@ async function submitSchedule(force = false) {
               <span class="t" style="text-align:right"><span class="badge">{{ m.teamB?.name || '待定' }}<span class="dot" :style="{ background: store.unitOfUid(m.teamB?.unit_id)?.color }"></span></span></span>
             </div>
             <div v-if="m.note" class="note-line">📝 {{ m.note }}</div>
+            <div v-if="m.is_paused" class="pause-line">⏸️ 已被安全事件暂停：{{ m.pause_reason }}（请到「🚑 安全事件」页恢复或改期）</div>
             <div style="font-size:11px;color:var(--muted);margin-top:8px">
               📍 {{ m.venue?.name }}
               <span v-if="m.status==='scheduled'" style="margin-left:8px">
                 🧑‍⚖️ {{ store.crewOf(m.id).map(a => (a.role === 'chief' ? '主' : a.role === 'assistant' ? '助' : '台') + a.referee?.name).join(' · ') || '执法名单待安排' }}
               </span>
-              <button v-if="m.status !== 'void'" class="btn ghost sm" @click="openSchedule(m)">{{ m.status === 'finished' ? '📦 更正赛程记录' : '🕐 改期/换场' }}</button>
+              <button v-if="m.status !== 'void' && !m.is_paused" class="btn ghost sm" @click="openSchedule(m)">{{ m.status === 'finished' ? '📦 更正赛程记录' : '🕐 改期/换场' }}</button>
+              <span v-else-if="m.is_paused" class="tag r">🔒 改期锁定</span>
               <span :class="m.status==='finished' ? 'tag g' : m.status==='void' ? 'tag r' : 'tag o'">{{ m.status==='finished' ? '已完赛' : m.status==='void' ? '已取消' : '待赛' }}</span>
             </div>
           </div>
@@ -153,6 +155,8 @@ async function submitSchedule(force = false) {
 
 <style scoped>
 .note-line { font-size: 12px; color: var(--muted); margin-top: 6px; padding: 5px 9px; background: var(--bg2); border-radius: 8px; }
+.paused { border-color: #f0a1a1; background: linear-gradient(180deg,#fff8f8,#fff); }
+.pause-line { font-size: 12px; color: #b3186e; margin-top: 6px; padding: 5px 9px; background: #fff0f6; border: 1px solid #f3c9dd; border-radius: 8px; }
 .modal-mask { position: fixed; inset: 0; background: rgba(29,39,51,.42); display: grid; place-items: center; z-index: 1000; }
 .modal { background: #fff; border-radius: 16px; padding: 22px; width: 520px; max-width: calc(100vw - 40px); box-shadow: var(--shadow); }
 .modal h3 { font-size: 17px; margin-bottom: 12px; }
