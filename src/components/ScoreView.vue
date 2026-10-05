@@ -132,7 +132,8 @@ const accessOf = id => store.matchAccess.find(x => x.match_id === id)
           <span v-if="m.status==='scheduled' && !store.chiefOf(m.id)" class="tag o">🟠 尚未安排主裁</span>
         </div>
         <!-- 入场核验回写：双方到场 / 执法到岗 / 异常拦截 -->
-        <div v-if="m.status==='scheduled' && accessOf(m.id)" class="gate-line">
+        <div v-if="m.is_paused" class="pause-banner">🚨 {{ m.pause_reason || '安全事件处置中' }} · 场次已暂停，恢复或改期后再录入比分<span v-if="m.paused_incident_id">（SI-{{ String(m.paused_incident_id).padStart(4,'0') }}）</span></div>
+        <div v-if="m.status==='scheduled' && !m.is_paused && accessOf(m.id)" class="gate-line">
           <span class="tag" :class="accessOf(m.id).team_a.checked_in ? 'g' : 'o'">{{ accessOf(m.id).team_a.checked_in ? '🟢' : '⏳' }} 主队列</span>
           <span class="tag" :class="accessOf(m.id).team_b.checked_in ? 'g' : 'o'">{{ accessOf(m.id).team_b.checked_in ? '🟢' : '⏳' }} 客队列</span>
           <span class="tag" :class="accessOf(m.id).crew_checked >= accessOf(m.id).crew_total && accessOf(m.id).crew_total ? 'g' : 'o'">🧑‍⚖️ 裁判到岗 {{ accessOf(m.id).crew_checked }}/{{ accessOf(m.id).crew_total }}</span>
@@ -145,7 +146,7 @@ const accessOf = id => store.matchAccess.find(x => x.match_id === id)
           <input v-model.number="tb" type="number" min="0" class="score-in" style="width:48px">
         </div>
         <div class="row mt8" style="justify-content:flex-end">
-          <button v-if="active?.id !== m.id && m.status==='scheduled'" class="btn primary sm" @click="open(m)">✍️ 录入比分</button>
+          <button v-if="active?.id !== m.id && m.status==='scheduled'" class="btn primary sm" :disabled="m.is_paused" @click="open(m)">{{ m.is_paused ? '⏸️ 暂停中不可录入' : '✍️ 录入比分' }}</button>
           <template v-if="active?.id === m.id">
             <button class="btn ghost sm" @click="active=null">取消</button>
             <button class="btn green sm" @click="saveScore">保存赛果</button>
@@ -186,4 +187,5 @@ const accessOf = id => store.matchAccess.find(x => x.match_id === id)
 .note-line { font-size: 12px; color: var(--muted); margin-top: 8px; padding: 5px 9px; background: var(--bg2); border-radius: 8px; }
 .crew-line { margin-top: 8px; }
 .gate-line { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+.pause-banner { margin-top: 8px; padding: 7px 11px; background: #ffecec; border: 1px solid #f3c9cb; border-radius: 9px; color: #e5484d; font-size: 12px; font-weight: 700; }
 </style>

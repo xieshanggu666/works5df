@@ -82,9 +82,27 @@ const accessByReason = computed(() => {
 const REASON_LABEL = {
   BADGE_NOT_FOUND: '证件不存在/已注销', BADGE_BLOCKED: '证件停用或暂扣', INELIGIBLE: '资格失效',
   NO_FIXTURE: '无本场赛程（非对阵/无待赛）', WRONG_VENUE: '核验场地不符', NOT_ASSIGNED: '无在派执法排班',
-  MATCH_NOT_PLAYABLE: '场次已完赛/取消', DUPLICATE: '重复核验', UNKNOWN: '其他'
+  MATCH_NOT_PLAYABLE: '场次已完赛/取消', MATCH_PAUSED: '场次因安全事件暂停', DUPLICATE: '重复核验', UNKNOWN: '其他'
 }
 const matchAdmissionRows = computed(() => store.matchAccess)
+
+// —— 安全事件处置审计 ——
+const incidentStat = computed(() => {
+  const c = { reported: 0, triaged: 0, handling: 0, resolved: 0, closed: 0 }
+  const sev = { high: 0, medium: 0, low: 0 }
+  const byCategory = {}
+  store.incidents.forEach(i => {
+    c[i.status] = (c[i.status] || 0) + 1
+    if (i.severity) sev[i.severity]++
+    byCategory[i.category] = (byCategory[i.category] || 0) + 1
+  })
+  return { c, sev, byCategory }
+})
+const INC_CAT = { injury: '🩹 运动伤病', medical: '🚑 医疗急救', security: '🚨 治安冲突', crowd: '👥 观众秩序', facility: '🛠️ 场地设施', weather: '⛈️ 极端天气', doping: '💊 违规/兴奋剂', other: '📌 其他' }
+const INC_SEV = { high: '🔴 重大', medium: '🟠 较大', low: '🟢 一般' }
+const INC_STATUS = { reported: '待分级', triaged: '处置中', handling: '处置中', resolved: '待结案', closed: '已结案' }
+const INC_ACTION = { report: '上报', triage: '受理分级', handle: '处置进展', resolve: '标记解决', close: '结案', reopen: '重新开启', badge_hold: '证件暂扣', badge_release: '解除暂扣', match_pause: '场次暂停', match_resume: '恢复场次', match_reschedule: '暂停改期' }
+const recentIncidentLogs = computed(() => store.incidentLogs.slice(0, 10))
 </script>
 
 <template>
@@ -255,6 +273,67 @@ const matchAdmissionRows = computed(() => store.matchAccess)
             </table>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 安全事件处置审计 -->
+    <div class="card mt">
+      <div class="caption">🚨 赛事安全事件处置审计 <span class="hint">四方协同上报 · 分级 · 处置 · 结案 · 联动证件暂扣 / 场次暂停改期 / 异常审计</span></div>
+      <div class="pad">
+        <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <span class="tag o">待分级 {{ incidentStat.c.reported || 0 }}</span>
+          <span class="tag b">处置中 {{ (incidentStat.c.triaged || 0) + (incidentStat.c.handling || 0) }}</span>
+          <span class="tag y">待结案 {{ incidentStat.c.resolved || 0 }}</span>
+          <span class="tag gray">已结案 {{ incidentStat.c.closed || 0 }}</span>
+          <span class="tag r">🔴 重大 {{ incidentStat.sev.high || 0 }}</span>
+          <span class="tag o">🟠 较大 {{ incidentStat.sev.medium || 0 }}</span>
+          <span class="tag g">🟢 一般 {{ incidentStat.sev.low || 0 }}</span>
+        </div>
+        <div class="grid g2">
+          <div>
+            <div class="ph" style="font-size:12px;margin-bottom:8px;font-weight:700">事件类型分布</div>
+            <table>
+              <thead><tr><th>类型</th><th>数量</th></tr></thead>
+              <tbody>
+                <tr v-for="(n, k) in incidentStat.byCategory" :key="k"><td>{{ INC_CAT[k] || k }}</td><td class="mono" style="font-weight:800">{{ n }}</td></tr>
+                <tr v-if="!Object.keys(incidentStat.byCategory).length"><td colspan="2" class="empty">暂无安全事件</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div class="ph" style="font-size:12px;margin-bottom:8px;font-weight:700">事件案卷（最新 8 件）</div>
+            <table>
+              <thead><tr><th>编号</th><th>类型/标题</th><th>级别</th><th>状态</th><th>联动</th></tr></thead>
+              <tbody>
+                <tr v-for="i in store.incidents.slice(0, 8)" :key="i.id">
+                  <td class="mono" style="font-weight:800;color:var(--accent3)">{{ i.code }}</td>
+                  <td class="ph" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ INC_CAT[i.category] }} · {{ i.title }}</td>
+                  <td>{{ i.severity ? INC_SEV[i.severity] : '—' }}</td>
+                  <td><span class="tag" :class="{ reported: 'o', triaged: 'b', handling: 'b', resolved: 'y', closed: 'gray' }[i.status]">{{ INC_STATUS[i.status] }}</span></td>
+                  <td class="ph" style="white-space:nowrap">
+                    <span v-if="i.paused_matches?.length" class="tag r">⏸️{{ i.paused_matches.length }}</span>
+                    <span v-if="i.held_badges?.length" class="tag r">🪪{{ i.held_badges.length }}</span>
+                    <span v-if="!i.paused_matches?.length && !i.held_badges?.length">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="ph" style="font-size:12px;margin:14px 0 8px;font-weight:700">处置动作留痕（最新）</div>
+        <table>
+          <thead><tr><th>时间</th><th>事件</th><th>动作</th><th>详情</th><th>经办</th></tr></thead>
+          <tbody>
+            <tr v-for="l in recentIncidentLogs" :key="l.id">
+              <td class="mono ph" style="white-space:nowrap">{{ l.created_at }}</td>
+              <td class="mono" style="font-weight:700">{{ l.incident_code }}</td>
+              <td><span class="tag" :class="{ report: 'o', triage: 'b', handle: 'b', resolve: 'y', close: 'g', reopen: 'r', badge_hold: 'r', badge_release: 'g', match_pause: 'r', match_resume: 'g', match_reschedule: 'y' }[l.action]">{{ INC_ACTION[l.action] || l.action }}</span></td>
+              <td class="ph" style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ l.detail }}</td>
+              <td>{{ l.actor_name }}</td>
+            </tr>
+            <tr v-if="!recentIncidentLogs.length"><td colspan="5" class="empty">暂无处置记录</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 

@@ -102,10 +102,12 @@ async function submitSchedule(force = false) {
               <span class="score-chip" v-else>{{ m.score_a }}:{{ m.score_b }}<template v-if="m.tb_a != null">（决胜 {{ m.tb_a }}:{{ m.tb_b }}）</template></span>
               <span class="t" style="text-align:right"><span class="badge">{{ m.teamB?.name || '待定' }}<span class="dot" :style="{ background: store.unitOfUid(m.teamB?.unit_id)?.color }"></span></span></span>
             </div>
-            <div v-if="m.note" class="note-line">📝 {{ m.note }}</div>
+            <div v-if="m.is_paused" class="pause-note">🚨 {{ m.pause_reason || '安全事件处置中' }} · 场次暂停（SI-{{ String(m.paused_incident_id||'').padStart(4,'0') }}）<template v-if="m.reschedule_note"> · {{ m.reschedule_note }}</template></div>
+            <div v-if="m.note && !m.is_paused" class="note-line">📝 {{ m.note }}</div>
             <div style="font-size:11px;color:var(--muted);margin-top:8px">
               📍 {{ m.venue?.name }}
-              <span v-if="m.status==='scheduled'" style="margin-left:8px">
+              <span v-if="m.is_paused" style="margin-left:8px"><span class="tag r">⏸️ 安全暂停</span></span>
+              <span v-else-if="m.status==='scheduled'" style="margin-left:8px">
                 🧑‍⚖️ {{ store.crewOf(m.id).map(a => (a.role === 'chief' ? '主' : a.role === 'assistant' ? '助' : '台') + a.referee?.name).join(' · ') || '执法名单待安排' }}
               </span>
               <button v-if="m.status !== 'void'" class="btn ghost sm" @click="openSchedule(m)">{{ m.status === 'finished' ? '📦 更正赛程记录' : '🕐 改期/换场' }}</button>
@@ -153,6 +155,7 @@ async function submitSchedule(force = false) {
 
 <style scoped>
 .note-line { font-size: 12px; color: var(--muted); margin-top: 6px; padding: 5px 9px; background: var(--bg2); border-radius: 8px; }
+.pause-note { font-size: 12px; color: #e5484d; font-weight: 700; margin-top: 6px; padding: 6px 10px; background: #ffecec; border: 1px solid #f3c9cb; border-radius: 8px; }
 .modal-mask { position: fixed; inset: 0; background: rgba(29,39,51,.42); display: grid; place-items: center; z-index: 1000; }
 .modal { background: #fff; border-radius: 16px; padding: 22px; width: 520px; max-width: calc(100vw - 40px); box-shadow: var(--shadow); }
 .modal h3 { font-size: 17px; margin-bottom: 12px; }

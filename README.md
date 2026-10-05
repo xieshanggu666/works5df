@@ -38,6 +38,7 @@ event/
         ├── RegistrationView.vue # 报名与资格审核（提交/审核/退报/撤销，回显入场核验结果）
         ├── AccessView.vue       # 赛事证件与入场核验（扫码核验/证件管理/场次入场/流水/异常审计）
         ├── AppealView.vue       # 赛事申诉复核（单位异议/受理改判/驳回，联动积分奖牌淘汰赛）
+        ├── SafetyView.vue       # 赛事安全事件处置（医疗/安保/裁判/组委会协同上报/分级/处置/结案，联动证件暂扣·场次暂停改期·异常审计）
         ├── TeamView.vue         # 队伍与运动员
         ├── VenueView.vue        # 场地与裁判
         ├── MedalView.vue        # 奖牌榜
@@ -75,8 +76,10 @@ npm run dev      # 后端 4170 + 前端 5203
 | `venue_staff` | 场地工作人员（岗位 role：场地主管/医疗/安保/器材/媒体/志愿者 + 服务场地，状态 在岗/离岗） |
 | `badges` | 赛事证件（编号 T/A/R/S-xxxx，主体 team/athlete/referee/staff；`zones` 授权区域快照；status active/blocked，`block_manual` 标记人工暂扣） |
 | `access_checkins` | 入场核验流水（pass/deny/forced_pass；is_duplicate 同日同场幂等；reason_code 拒绝原因码；回写各域的唯一数据源） |
-| `access_logs` | 证件与入场异常审计（issue/sync/block/unblock/deny/force_pass，severity info/warn/danger，含原因与经办人） |
-| — | **回写字段**：`registrations.last_checkin_at/result`（报名）、`assignments.checkin_at`（排班）、`matches.checkin_a_at/checkin_b_at/checkin_crew/checkin_crew_total/admission_denied`（比赛） |
+| `access_logs` | 证件与入场异常审计（issue/sync/block/unblock/deny/force_pass，及安全事件联动 incident_pause/incident_resume/incident_reschedule，severity info/warn/danger，含原因与经办人） |
+| `incidents` | 赛事安全事件（编号 SI-xxxx；类型 category：injury 伤病/medical 急救/security 治安/crowd 观众/facility 设施/weather 天气/doping 违规/other；上报角色 reporter_role：medical/security/referee/committee；状态 reported 待分级→triaged/handling 处置中→resolved 已解决待结案→closed 已结案；severity low/medium/high 由组委会分级） |
+| `incident_logs` | 安全事件全量留痕（report/triage/handle/resolve/close/reopen/badge_hold/badge_release/match_pause/match_resume/match_reschedule，含经办人、详情与变更快照，按事件串联处置时间线） |
+| — | **回写字段**：`registrations.last_checkin_at/result`（报名）、`assignments.checkin_at`（排班）、`matches.checkin_a_at/checkin_b_at/checkin_crew/checkin_crew_total/admission_denied`（比赛）；**安全联动字段**：`matches.is_paused/paused_at/paused_incident_id/pause_reason/resumed_at/reschedule_note`（场次暂停改期）、`badges.block_manual/hold_incident_id/held_at`（事件暂扣溯源） |
 
 ## 核心算法
 
@@ -112,6 +115,20 @@ npm run dev      # 后端 4170 + 前端 5203
 
 每次改判前后均抓取**奖牌快照与积分榜快照**，把单位级奖牌增减（金/银/铜 ±n）、队伍积分与名次变化连同回写明细、重赛/递补场次写入 `appeals.impact` 与 `appeal_logs`；比分类改判同时在 `assignment_logs` 留痕（`match_change`）。侧边导航对「待受理+复核中」数量显示角标，总览页展示待办申诉，报表中心提供改判审计表。
 
+## 赛事安全事件处置（🚨 安全事件页）
+
+**医疗、安保、裁判、组委会四方协同**处置赛事现场安全事件（伤病、医疗急救、治安冲突、观众秩序、场地设施、极端天气、违规/兴奋剂等），页面顶部可切换当前处置身份（权限前后端一致）。工作流为：
+
+**四方上报（reported 待分级）→ 🏛️ 组委会分级（severity：🟢一般 / 🟠较大 / 🔴重大，必填研判意见）→ 多部门处置进展（handling/triaged 处置中，任一方均可追加进展并留痕）→ 标记已解决（resolved 已解决待结案）→ 🏛️ 组委会结案（closed，必填结案总结）**；结案后发现遗留问题可由组委会**重新开启**回到处置中。未分级不能标记解决/结案；分级仅组委会可操作（非组委会返回 403）；处置进展四方均可记录。
+
+**三大联动**（全部包裹在 `BEGIN IMMEDIATE` 单事务，重复操作幂等）：
+
+- **🪪 证件暂扣**：上报或处置中可对队伍/运动员/裁判/工作人员证件执行暂扣（`badges.hold_incident_id` 事件溯源 + `block_manual=1`），入场核验即刻拦截；**事件处置期间证件全量同步不会自动解停**（即便资格变动）。结案时可随案解除，按实时资格重新判定有效/停用；仅当停用确由本事件造成时才清除人工暂扣标记（与独立人工暂扣互不去除）。暂扣/解除同时写入 `access_logs`（danger/info）。
+- **⏸️ 场次暂停**：仅待赛场次可暂停（`matches.is_paused` + 暂停原因与溯源事件）。暂停后：入场核验对所有角色（队伍/裁判等）一律拒绝（原因码 `MATCH_PAUSED`），**即使该证暂停前已放行、且无法被"强制放行"绕过**；成绩录入在前后端双重拦截。可随时**恢复**（到场/到岗核验数据保留）。
+- **🕐 暂停改期**：暂停场次可直接改时间/换场地，复用既有改期事务——场地/裁判冲突检测、冲突裁判自动改派、整场执法席位自动补齐，冲突无法解决时整笔原子回滚（支持强制保留冲突并留痕）；改期成功后自动解除暂停态，场次按新档期正常待赛。
+
+**结案闸口**：仍有暂停未恢复/未改期场次或事件暂扣未解除证件时禁止结案；可勾选随结案一并解除暂扣证件。每次动作（上报/分级/处置/暂停/恢复/改期/暂扣/解除/结案/重开）均写入 `incident_logs` 形成可追溯时间线，并在 `access_logs` 留下场次/证件联动审计；侧边导航对「待分级+待结案」显示紫色角标，总览页展示未结重大事件/暂停场次/暂扣证件，报表中心提供类型分布、案卷与处置动作审计表。
+
 ## 赛事证件与入场核验（🪪 证件核验页）
 
 运动员（队伍/田径单项）、裁判、场地工作人员人手一证（编号前缀 **T/A/R/S**，如 `T-0001`），入场口扫码后系统按**资格 + 赛程实时计算动态权限**，不存在永久通行证：
@@ -123,7 +140,7 @@ npm run dev      # 后端 4170 + 前端 5203
 
 **授权区域（zones）**随资格/岗位/赛程动态生成并在证件上留存快照；资格未生效（待审核/驳回）、退报、撤销资格、人员离岗时证件自动停用并收回区域；资格恢复自动激活。组委会可**人工暂扣**违纪证件（`block_manual`，资格恢复也不会自动解停，须人工解除）。服务启动时与 `POST /api/badges/sync` 提供全量证件同步（幂等，旧库自动补发）。
 
-**核验结果四类**：✅ 放行、⛔ 拒绝（原因码 `BADGE_NOT_FOUND`/`BADGE_BLOCKED`/`NO_FIXTURE`/`WRONG_VENUE`/`NOT_ASSIGNED`/`MATCH_NOT_PLAYABLE`）、⚠️ **强制放行**（值班主任必填原因留痕，计入异常审计）、🔁 重复核验（同证同日同场重复扫码返回首次结果，不重复回写）。全部判定在 `BEGIN IMMEDIATE` 单事务中完成。
+**核验结果四类**：✅ 放行、⛔ 拒绝（原因码 `BADGE_NOT_FOUND`/`BADGE_BLOCKED`/`NO_FIXTURE`/`WRONG_VENUE`/`NOT_ASSIGNED`/`MATCH_NOT_PLAYABLE`/`MATCH_PAUSED`）、⚠️ **强制放行**（值班主任必填原因留痕，计入异常审计）、🔁 重复核验（同证同日同场重复扫码返回首次结果，不重复回写）。全部判定在 `BEGIN IMMEDIATE` 单事务中完成。其中安全事件暂停的场次（`MATCH_PAUSED`）**优先级最高**：即便该证此前已放行，暂停后重扫也一律重新拦截，且不允许"强制放行"绕过，需先恢复场次或完成暂停改期。
 
 **核验结果回写四域**（核验流水是唯一写入方）：
 

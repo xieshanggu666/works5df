@@ -19,6 +19,11 @@ function appealBrief(a) {
   if (a.target_type === 'track') return `${t.aname} ${t.mark}s（第${t.rank}名）`
   return `「${t.name}」的参赛资格`
 }
+
+const INC_CAT = { injury: '🩹 伤病', medical: '🚑 急救', security: '🚨 治安', crowd: '👥 观众', facility: '🛠️ 设施', weather: '⛈️ 天气', doping: '💊 违规', other: '📌 其他' }
+const INC_SEV = { high: { t: '🔴 重大', c: '#e5484d' }, medium: { t: '🟠 较大', c: 'var(--accent)' }, low: { t: '🟢 一般', c: 'var(--accent2)' } }
+const incidentTodo = computed(() => store.incidents.filter(i => i.status === 'reported' || i.status === 'resolved'))
+const incidentOpen = computed(() => store.incidents.filter(i => i.status !== 'closed'))
 </script>
 
 <template>
@@ -47,6 +52,27 @@ function appealBrief(a) {
           <div class="mini-stat"><span>🧑‍⚖️ 执法到岗</span><b class="mono">{{ ov.access.crew_ready }}/{{ ov.access.crew_total }} 席</b><div class="hbar"><i :style="{ width: (ov.access.crew_total ? Math.round(ov.access.crew_ready / ov.access.crew_total * 100) : 100) + '%', background: 'var(--accent3)' }"></i></div></div>
           <div class="mini-stat"><span>🪪 停用/暂扣证件</span><b class="mono" :style="{ color: ov.access.badges_blocked ? '#e5484d' : 'var(--accent2)' }">{{ ov.access.badges_blocked }}</b><div class="hbar"><i :style="{ width: ov.access.badges_blocked ? '100%' : '0%', background: '#e5484d' }"></i></div></div>
           <div class="mini-stat"><span>⚠️ 今日异常（拦截+强制）</span><b class="mono" :style="{ color: ov.access.today_deny + ov.access.today_forced ? '#c98a00' : 'var(--accent2)' }">{{ ov.access.today_deny + ov.access.today_forced }}</b><div class="hbar"><i :style="{ width: (ov.access.today_deny + ov.access.today_forced) ? '100%' : '0%', background: 'var(--gold)' }"></i></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安全事件处置速览 -->
+    <div class="card mt" v-if="ov.incidents">
+      <div class="caption">🚨 赛事安全事件处置 <span class="hint">待分级 {{ ov.incidents.reported }} · 处置中 {{ ov.incidents.triaged }} · 待结案 {{ ov.incidents.resolved }} · 已结案 {{ ov.incidents.closed }}<template v-if="ov.incidents.high_open"> · <b style="color:#e5484d">未结重大 {{ ov.incidents.high_open }}</b></template></span></div>
+      <div class="pad">
+        <div class="grid g4" style="gap:12px;margin-bottom:12px">
+          <div class="mini-stat"><span>🔴 未结重大事件</span><b class="mono" :style="{ color: ov.incidents.high_open ? '#e5484d' : 'var(--accent2)' }">{{ ov.incidents.high_open }}</b></div>
+          <div class="mini-stat"><span>⏸️ 安全暂停场次</span><b class="mono" :style="{ color: ov.incidents.paused_matches ? '#e5484d' : 'var(--accent2)' }">{{ ov.incidents.paused_matches }}</b></div>
+          <div class="mini-stat"><span>🪪 事件暂扣证件</span><b class="mono" :style="{ color: ov.incidents.held_badges ? '#c98a00' : 'var(--accent2)' }">{{ ov.incidents.held_badges }}</b></div>
+          <div class="mini-stat"><span>📁 在办 / 累计</span><b class="mono">{{ ov.incidents.open }} / {{ ov.incidents.total }}</b></div>
+        </div>
+        <div v-if="!incidentTodo.length && !incidentOpen.length" class="empty" style="padding:12px">暂无安全事件</div>
+        <div v-for="i in incidentTodo.slice(0,4)" :key="i.id" class="mcard" style="margin-bottom:8px;border-left:3px solid" :style="{ borderLeftColor: INC_SEV[i.severity]?.c || 'var(--accent)' }">
+          <div class="mheader">
+            <span><b class="mono" style="color:var(--accent3)">{{ i.code }}</b> · {{ INC_CAT[i.category] }} · {{ i.title }}</span>
+            <span><span class="tag" :class="i.status==='reported' ? 'o' : 'y'">{{ i.status === 'reported' ? '待分级' : '已解决待结案' }}</span></span>
+          </div>
+          <div class="ph" style="font-size:12px">📍 {{ i.venue?.name || '—' }}<span v-if="i.location"> · {{ i.location }}</span> · 上报 {{ i.reporter_name }}（{{ {medical:'医疗',security:'安保',referee:'裁判',committee:'组委会'}[i.reporter_role] }}）</div>
         </div>
       </div>
     </div>

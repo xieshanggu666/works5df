@@ -239,6 +239,50 @@ CREATE TABLE IF NOT EXISTS access_logs (
   created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at);
+
+-- 赛事安全事件：医疗/安保/裁判/组委会协同上报 → 组委会分级 → 多部门协同处置 → 结案
+CREATE TABLE IF NOT EXISTS incidents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,        -- 事件编号 SI-0001
+  title TEXT NOT NULL,              -- 事件标题
+  category TEXT NOT NULL,           -- injury(伤病)/medical(医疗急救)/security(治安冲突)/crowd(观众秩序)/facility(场地设施)/weather(天气)/doping(兴奋剂/违规)/other
+  detail TEXT NOT NULL,             -- 事件经过
+  reporter_role TEXT NOT NULL,      -- medical/security/referee/committee
+  reporter_name TEXT,
+  sport_id INTEGER,
+  venue_id INTEGER,
+  match_id INTEGER,                 -- 关联场次（可空）
+  badge_id INTEGER,                 -- 关联证件（可空，便于上报即暂扣）
+  location TEXT,                    -- 具体位置
+  contact TEXT,                     -- 联系人/当事人
+  status TEXT NOT NULL DEFAULT 'reported',  -- reported(待分级)/triaged(已分级处置中)/handling(处置中)/resolved(已解决待结案)/closed(已结案)
+  severity TEXT,                    -- low(一般)/medium(较大)/high(重大)；分级前为空
+  triaged_at TEXT,
+  triage_role TEXT,
+  triage_name TEXT,
+  triage_note TEXT,                 -- 分级研判意见
+  closed_at TEXT,
+  close_role TEXT,
+  close_name TEXT,
+  resolution TEXT,                  -- 结案总结
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+CREATE INDEX IF NOT EXISTS idx_incidents_severity ON incidents(severity);
+-- 安全事件处置全量留痕：上报/受理分级/处置进展/暂停/恢复/改期/暂扣/解除/结案/重开
+CREATE TABLE IF NOT EXISTS incident_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  incident_id INTEGER NOT NULL,
+  action TEXT NOT NULL,             -- report/triage/handle/close/reopen/badge_hold/badge_release/match_pause/match_resume/match_reschedule
+  detail TEXT,                      -- 人类可读详情
+  actor_role TEXT,
+  actor_name TEXT,
+  badge_id INTEGER,
+  match_id INTEGER,
+  snapshot TEXT,                    -- 变更快照 JSON
+  created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_incident_logs ON incident_logs(incident_id);
 `)
 
 // —— 旧库迁移：补充字段（列已存在则忽略） ——
@@ -275,6 +319,19 @@ db.prepare(`UPDATE matches SET winner = CASE WHEN score_a > score_b THEN team_a 
   ['admission_denied', 'INTEGER DEFAULT 0']
 ].forEach(([col, def]) => {
   try { db.prepare(`ALTER TABLE matches ADD COLUMN ${col} ${def}`).run() } catch (e) { /* 列已存在 */ }
+})
+// 安全事件联动：场次暂停 / 改期（暂停后入场核验拒绝、成绩录入拦截，恢复后放行）
+;[
+  ['is_paused', 'INTEGER DEFAULT 0'], ['paused_at', 'TEXT'], ['paused_incident_id', 'INTEGER'],
+  ['pause_reason', 'TEXT'], ['resumed_at', 'TEXT'], ['reschedule_note', 'TEXT']
+].forEach(([col, def]) => {
+  try { db.prepare(`ALTER TABLE matches ADD COLUMN ${col} ${def}`).run() } catch (e) { /* 列已存在 */ }
+})
+// 证件域：安全事件暂扣溯源（事件处置期间 syncBadge 不会自动解停；结案时随事件联动解除）
+;[
+  ['hold_incident_id', 'INTEGER'], ['held_at', 'TEXT']
+].forEach(([col, def]) => {
+  try { db.prepare(`ALTER TABLE badges ADD COLUMN ${col} ${def}`).run() } catch (e) { /* 列已存在 */ }
 })
 
 export function run(sql, ...p) { return db.prepare(sql).run(...p) }

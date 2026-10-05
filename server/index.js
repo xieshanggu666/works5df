@@ -750,6 +750,64 @@ function seed() {
   if (runner) verifyAccess({ code: badgeCode('athlete', runner.id), venueId: vid('田径场'), operator: '检录处' })
   // 异常：媒体记者（仅媒体区）在运动员通道扫比赛区 → 场地不符拒绝
   verifyAccess({ code: badgeCode('staff', staffId['周记者']), venueId: vid('五人足球场'), operator: '运动员通道' })
+
+  // —— 演示：赛事安全事件处置（医疗/安保/裁判/组委会四方协同，覆盖全状态 + 三类联动）——
+  const spFootId = get(`SELECT id FROM sports WHERE name='五人制足球'`).id
+  const spBasketId = get(`SELECT id FROM sports WHERE name='篮球'`).id
+  const facMatch = get(`SELECT * FROM matches WHERE sport_id=? AND group_name='B组' AND status='scheduled'`, spFootId)
+  const flyTeam = get(`SELECT t.id FROM teams t JOIN units u ON u.id=t.unit_id WHERE t.name='飞鹰队' AND t.sport_id=?`, spFootId)
+  // 1) 处置中：球员拼抢受伤（医疗）→ 重大，暂停末轮场次、暂扣肇事方证件，安保维持秩序
+  const inj = submitIncident({
+    title: '足球小组赛拼抢致踝关节扭伤', category: 'injury',
+    detail: 'A组末轮对抗中飞鹰队 9 号球员落地时踝关节外翻扭伤，疼痛无法站立，疑似韧带损伤；场边医疗已上前处置。',
+    actor_role: 'medical', actor_name: '赵医生',
+    sport_id: spFootId, venue_id: vid('五人足球场'), match_id: gateMatch?.id,
+    location: '五人足球场 东侧边线', contact: '飞鹰队 9 号'
+  })
+  triageIncident(inj.id, {
+    severity: 'high', triage_note: '球员疑似韧带损伤需转运，启动重大事件响应：暂停该场比赛、医疗组护送就医、安保维护场边秩序，其余场次正常进行。',
+    actor_role: 'committee', actor_name: '王总指挥'
+  })
+  if (flyTeam) holdBadgeForIncident(inj.id, get('SELECT id FROM badges WHERE subject_type=? AND subject_id=?', 'team', flyTeam.id).id,
+    '涉事球队领队证件暂扣待核（事件调查期间暂停入场权限）', { role: 'security', name: '钱安保' })
+  if (gateMatch) pauseMatchForIncident(inj.id, gateMatch.id, '球员受伤医疗救援，比赛暂停', { role: 'referee', name: '当值主裁' })
+  handleIncident(inj.id, { content: '担架转运至医务室，冰敷固定后已联系 120 转送定点医院拍片；同队人员情绪稳定。', actor_role: 'medical', actor_name: '赵医生' })
+  handleIncident(inj.id, { content: '已在伤者区域拉设警戒线，引导围观观众退席，东西看台秩序正常，未发生推搡。', actor_role: 'security', actor_name: '钱安保' })
+  handleIncident(inj.id, { content: '已记录比赛暂停时比分 0:0、比赛用时 23 分钟，双方球队无异议，等待改期通知。', actor_role: 'referee', actor_name: '张裁判' })
+
+  // 2) 待分级：安保刚上报的观众看台冲突
+  submitIncident({
+    title: '篮球馆二层看台观众口角冲突', category: 'security',
+    detail: '中场休息时两名观众因座位问题发生口角，伴随推搡，周边观众围观；已派安保到场分隔，暂无人受伤。',
+    actor_role: 'security', actor_name: '钱安保',
+    sport_id: spBasketId, venue_id: vid('中心篮球馆'), location: '中心篮球馆 二层 3 号看台', contact: '涉事观众两人'
+  })
+
+  // 3) 已结案：场地积水（设施）→ 一般，暂停改期到备用时段后结案，无暂扣
+  const fac = submitIncident({
+    title: '五人足球场半场积水', category: 'facility',
+    detail: '短时强降雨导致场地西侧半场积水约 2cm，存在滑倒风险，器材组建议暂停并清理排水。',
+    actor_role: 'committee', actor_name: '刘主管',
+    sport_id: spFootId, venue_id: vid('五人足球场'), match_id: facMatch?.id, location: '五人足球场 西侧半场'
+  })
+  triageIncident(fac.id, {
+    severity: 'low', triage_note: '一般设施事件：启用备用2号场改期进行，器材组同步疏通排水，不影响整体赛程。',
+    actor_role: 'committee', actor_name: '王总指挥'
+  })
+  if (facMatch) {
+    pauseMatchForIncident(fac.id, facMatch.id, '场地积水清理，暂停改期至备用场地', { role: 'committee', name: '刘主管' })
+    // 暂停改期：换备用2号场并顺延（复用改期事务：冲突检测 + 执法自动重排）
+    try {
+      rescheduleMatchForIncident(fac.id, facMatch.id,
+        { venue_id: vid('备用2号场'), time_label: '16:20', reason: '场地排水未完成，改备用2号场进行' },
+        { role: 'committee', name: '刘主管' })
+    } catch (e) { /* 备用档期冲突时仅保留暂停态，演示数据继续 */ }
+  }
+  handleIncident(fac.id, { content: '排水已疏通，备用2号场地胶无积水，裁判长检查通过。', actor_role: 'security', actor_name: '孙器材', status: 'resolved' })
+  closeIncident(fac.id, {
+    resolution: '场地排水完成并复查合格；受影响半决赛已改期备用2号场 16:20，执法名单随改期自动重排。后续赛前增加场地积水巡检。',
+    release_badges: true, actor_role: 'committee', actor_name: '王总指挥'
+  })
 }
 /* ================= 赛事证件与入场核验 ================= */
 // 证件类型 / 授权区域 / 场地工作人员岗位
@@ -826,10 +884,12 @@ function syncBadge(type, id, operator = '系统', logIt = false) {
     if (logIt) addAccessLog('issue', badge.id, code, `发放证件 ${code}（${SUBJECT_NAME[type]}「${state.name}」，授权：${zones.map(z => ZONE_NAME[z]).join('、') || '暂无'}）`, null, operator, 'info')
   } else {
     const wasBlocked = badge.status === 'blocked'
-    const newStatus = badge.block_manual ? badge.status : (eligible ? 'active' : 'blocked')
-    const reason = eligible ? null : '资格未通过或已失效'
+    // 安全事件暂扣中的证件：事件处置期间不随资格变化自动解停（结案联动解除时才放开）
+    const heldByIncident = !!badge.hold_incident_id
+    const newStatus = heldByIncident ? 'blocked' : badge.block_manual ? badge.status : (eligible ? 'active' : 'blocked')
+    const reason = heldByIncident ? badge.block_reason : eligible ? null : '资格未通过或已失效'
     run(`UPDATE badges SET name=?, unit_id=?, sport_id=?, venue_id=?, zones=?, status=?, block_reason=? WHERE id=?`,
-      state.name, state.unit_id ?? null, state.sport_id ?? null, state.venue_id ?? null, JSON.stringify(zones), newStatus, badge.block_manual ? badge.block_reason : reason, badge.id)
+      state.name, state.unit_id ?? null, state.sport_id ?? null, state.venue_id ?? null, JSON.stringify(zones), newStatus, badge.block_manual || heldByIncident ? reason : reason, badge.id)
     if (logIt && wasBlocked && newStatus === 'active') {
       addAccessLog('sync', badge.id, badge.code, `证件 ${badge.code} 资格恢复，自动恢复有效（授权：${zones.map(z => ZONE_NAME[z]).join('、')}）`, null, operator, 'info')
     }
@@ -949,6 +1009,9 @@ function verifyAccess({ code, venueId, matchId, gate, force, operator, timeLabel
       : state.status === 'revoked' ? '资格已被撤销'
       : (state.raw_status === '离岗' ? '场地工作人员已离岗' : '当前不在岗')
     decision = { code: 'BADGE_BLOCKED', message: why }
+  } else if (match && match.is_paused) {
+    // 安全事件联动：场次暂停/改期中，所有入场核验一律拒绝（医疗救援、赛事恢复后解除）
+    decision = { code: 'MATCH_PAUSED', message: `该场次因安全事件暂停（${match.pause_reason || '处置中'}），暂停期间禁止入场，恢复或改期后放行` }
   } else if (type === 'team') {
     // 队伍：资格有效 + 该场确为其赛程（对阵双方）+ 场地一致 + 场次可入场
     if (!match) {
@@ -957,6 +1020,8 @@ function verifyAccess({ code, venueId, matchId, gate, force, operator, timeLabel
     }
     if (!match) {
       decision = { code: 'NO_FIXTURE', message: '当前没有该队伍的待赛场次（按赛程入场）' }
+    } else if (match.is_paused) {
+      decision = { code: 'MATCH_PAUSED', message: `该场次因安全事件暂停（${match.pause_reason || '处置中'}），暂停期间禁止入场` }
     } else if (match.status !== 'scheduled') {
       decision = { code: 'MATCH_NOT_PLAYABLE', message: `该场次当前为${match.status === 'finished' ? '已完赛' : '已取消'}状态，不能入场`, eligibleMatch: match }
     } else if (match.team_a !== subjectId && match.team_b !== subjectId) {
@@ -1018,6 +1083,20 @@ function verifyAccess({ code, venueId, matchId, gate, force, operator, timeLabel
 
   // 拒绝（或强制放行）处理
   if (decision && decision.code) {
+    // 安全事件暂停的场次优先级最高：即便该证此前已放行（同日同场幂等），暂停后重扫也必须重新拦截；
+    // 且暂停属安全管控，不允许"强制放行"绕过，需先恢复场次或完成改期。
+    if (decision.code === 'MATCH_PAUSED') {
+      const rr = makeRecord('deny', false, decision.message, 'MATCH_PAUSED', decision.roleText, zones)
+      if (match) run(`UPDATE matches SET admission_denied=admission_denied+1 WHERE id=?`, match.id)
+      addAccessLog('deny', badge.id, badge.code,
+        `${gate || GATE_BY_TYPE[type]} 暂停场次拒绝 ${badge.name}（${SUBJECT_NAME[type]}）入场：${matchTitle(match)}：${decision.message}`,
+        decision.message, op, 'danger', match?.id ?? null, venueId)
+      return {
+        ok: true, pass: false, result: 'deny', reason: decision.message, reason_code: 'MATCH_PAUSED',
+        checkin_id: Number(rr.lastInsertRowid),
+        badge: { code: badge.code, name: badge.name, subject_type: type }, match: match ? matchTitle(match) : null
+      }
+    }
     if (dup) {
       makeRecord(dup.result, true, `重复核验（首次已于 ${dup.created_at} 放行）`, 'DUPLICATE', dup.role_snapshot, zones)
       return {
@@ -1085,6 +1164,10 @@ function matchAdmissionRows(matches) {
       match_id: m.id,
       title: matchTitle(m),
       status: m.status,
+      is_paused: !!m.is_paused,
+      pause_reason: m.pause_reason || null,
+      paused_incident_id: m.paused_incident_id || null,
+      reschedule_note: m.reschedule_note || null,
       time_label: m.time_label,
       venue: m.venue_id ? get('SELECT name FROM venues WHERE id=?', m.venue_id)?.name : null,
       team_a: { id: m.team_a, name: get('SELECT name FROM teams WHERE id=?', m.team_a)?.name, checked_in: !!m.checkin_a_at, at: m.checkin_a_at },
@@ -1200,6 +1283,7 @@ function finishMatch(id, sa, sb, tbA = null, tbB = null) {
   return withTransaction(() => {
     const m = get('SELECT * FROM matches WHERE id=?', id)
     if (m.status !== 'scheduled') throw new Error('该场次已完赛或取消，不能重复录入比分')
+    if (m.is_paused) throw new Error(`该场次因安全事件暂停（${m.pause_reason || '处置中'}），恢复或改期后再录入比分`)
     if (m.team_a == null || m.team_b == null) throw new Error('该场次存在轮空，无需录入比分')
     if (!isActiveTeam(m.team_a) || !isActiveTeam(m.team_b)) throw new Error('对阵中存在失去资格队伍，需先完成淘汰赛级联调整')
     let winner = null, ta = null, tb = null
@@ -2140,6 +2224,329 @@ function upholdAppeal(appealId, body) {
 }
 function safeParseJson(s) { try { return s ? JSON.parse(s) : null } catch { return null } }
 
+/* ================= 赛事安全事件处置 ================= */
+// 医疗/安保/裁判/组委会协同：上报 → 组委会分级 → 协同处置（进展留痕）→ 解决 → 结案
+// 联动：证件暂扣（事件溯源，sync 不自动解停）、场次暂停/恢复/改期、异常审计 access_logs
+const INCIDENT_ROLE_NAME = { medical: '医疗', security: '安保', referee: '裁判', committee: '组委会' }
+const INCIDENT_CATEGORY_META = {
+  injury: { icon: '🩹', text: '运动伤病' },
+  medical: { icon: '🚑', text: '医疗急救' },
+  security: { icon: '🚨', text: '治安冲突' },
+  crowd: { icon: '👥', text: '观众秩序' },
+  facility: { icon: '🛠️', text: '场地设施' },
+  weather: { icon: '⛈️', text: '极端天气' },
+  doping: { icon: '💊', text: '违规/兴奋剂' },
+  other: { icon: '📌', text: '其他' }
+}
+const INCIDENT_SEVERITY_META = {
+  high: { icon: '🔴', text: '重大', tag: 'r' },
+  medium: { icon: '🟠', text: '较大', tag: 'o' },
+  low: { icon: '🟢', text: '一般', tag: 'g' }
+}
+const INCIDENT_STATUS_META = {
+  reported: { text: '待分级', tag: 'o' },
+  triaged: { text: '处置中', tag: 'b' },
+  handling: { text: '处置中', tag: 'b' },
+  resolved: { text: '已解决待结案', tag: 'y' },
+  closed: { text: '已结案', tag: 'gray' }
+}
+const INCIDENT_LOG_META = {
+  report: { text: '上报', tag: 'o' }, triage: { text: '受理分级', tag: 'b' },
+  handle: { text: '处置进展', tag: 'b' }, resolve: { text: '标记解决', tag: 'y' },
+  close: { text: '结案', tag: 'g' }, reopen: { text: '重新开启', tag: 'r' },
+  badge_hold: { text: '证件暂扣', tag: 'r' }, badge_release: { text: '解除暂扣', tag: 'g' },
+  match_pause: { text: '场次暂停', tag: 'r' }, match_resume: { text: '恢复场次', tag: 'g' },
+  match_reschedule: { text: '暂停改期', tag: 'y' }
+}
+const INCIDENT_ACTIVE = new Set(['reported', 'triaged', 'handling', 'resolved'])
+function nextIncidentCode() {
+  const n = get('SELECT COUNT(*) c FROM incidents').c + 1
+  return 'SI-' + String(n).padStart(4, '0')
+}
+function addIncidentLog(incidentId, action, detail, actor = {}, extra = {}) {
+  run(`INSERT INTO incident_logs (incident_id,action,detail,actor_role,actor_name,badge_id,match_id,snapshot)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    incidentId, action, detail ?? null, actor.role || null, actor.name || INCIDENT_ROLE_NAME[actor.role] || '系统',
+    extra.badge_id ?? null, extra.match_id ?? null, extra.snapshot ? JSON.stringify(extra.snapshot) : null)
+}
+function incidentActor(body = {}) {
+  const role = INCIDENT_ROLE_NAME[body.actor_role] ? body.actor_role : 'committee'
+  return { role, name: (body.actor_name || '').trim() || INCIDENT_ROLE_NAME[role] }
+}
+
+// 上报安全事件：四方均可（医疗/安保/裁判/组委会），可在上报时联动暂扣证件
+function submitIncident(body) {
+  return withTransaction(() => {
+    const actor = incidentActor(body)
+    const category = body.category || 'other'
+    if (!INCIDENT_CATEGORY_META[category]) throw new Error('事件类型无效')
+    const title = (body.title || '').trim()
+    const detail = (body.detail || '').trim()
+    if (!title) throw new Error('请填写事件标题')
+    if (!detail) throw new Error('请描述事件经过')
+    const sportId = body.sport_id ? Number(body.sport_id) : null
+    if (sportId && !get('SELECT id FROM sports WHERE id=?', sportId)) throw new Error('关联项目不存在')
+    const venueId = body.venue_id ? Number(body.venue_id) : null
+    if (venueId && !get('SELECT id FROM venues WHERE id=?', venueId)) throw new Error('关联场地不存在')
+    const matchId = body.match_id ? Number(body.match_id) : null
+    let badgeId = body.badge_id ? Number(body.badge_id) : null
+    if (matchId) {
+      const m = get('SELECT * FROM matches WHERE id=?', matchId)
+      if (!m) throw new Error('关联场次不存在')
+    }
+    if (badgeId && !get('SELECT id FROM badges WHERE id=?', badgeId)) throw new Error('关联证件不存在')
+    const code = nextIncidentCode()
+    const r = run(`INSERT INTO incidents
+      (code,title,category,detail,reporter_role,reporter_name,sport_id,venue_id,match_id,badge_id,location,contact,status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'reported')`,
+      code, title, category, detail, actor.role, actor.name, sportId, venueId, matchId, badgeId,
+      (body.location || '').trim() || null, (body.contact || '').trim() || null)
+    const id = Number(r.lastInsertRowid)
+    const cat = INCIDENT_CATEGORY_META[category]
+    addIncidentLog(id, 'report', `${actor.name}（${INCIDENT_ROLE_NAME[actor.role]}）上报 ${cat.icon}${cat.text}事件「${title}」：${detail}`, actor)
+
+    // 上报即暂扣证件（多为安保/裁判现场处置）：以事件溯源方式人工暂扣，资格恢复也不会自动解停
+    if (badgeId) holdBadgeForIncident(id, badgeId, body.badge_reason || `${code} 事件现场暂扣`, actor)
+    return { ok: true, id, code }
+  })
+}
+
+// 证件暂扣/解除（事件联动）：hold_incident_id 记录溯源事件，syncBadge 在事件处置期间不自动解停
+function holdBadgeForIncident(incidentId, badgeId, reason, actor) {
+  const b = get('SELECT * FROM badges WHERE id=?', badgeId)
+  if (!b) throw new Error('证件不存在')
+  const inc = get('SELECT code,title FROM incidents WHERE id=?', incidentId)
+  if (!inc) throw new Error('安全事件不存在')
+  const fullReason = `${reason || '安全事件暂扣'}（${inc.code}）`
+  if (b.status === 'blocked' && (b.block_manual || b.hold_incident_id)) {
+    // 已暂扣：补齐事件溯源（若原先无事件）
+    if (!b.hold_incident_id) run(`UPDATE badges SET hold_incident_id=?, held_at=COALESCE(held_at, datetime('now','localtime')) WHERE id=?`, incidentId, badgeId)
+    addIncidentLog(incidentId, 'badge_hold', `证件 ${b.code}（${b.name}）已处于暂扣状态，已补充事件溯源`, actor, { badge_id: badgeId })
+    return { ok: true, idempotent: true }
+  }
+  run(`UPDATE badges SET status='blocked', block_manual=1, block_reason=?, hold_incident_id=?, held_at=datetime('now','localtime') WHERE id=?`,
+    fullReason, incidentId, badgeId)
+  addIncidentLog(incidentId, 'badge_hold', `证件 ${b.code}（${b.name}）被暂扣，入场核验将拦截；事件处置期间证件同步不会自动解停`, actor, { badge_id: badgeId })
+  addAccessLog('block', badgeId, b.code, `安全事件 ${inc.code} 暂扣证件（${b.name}）`, fullReason, `${actor.name}（安全事件）`, 'danger', null, null)
+  return { ok: true }
+}
+function releaseBadgeForIncident(incidentId, badgeId, reason, actor) {
+  const b = get('SELECT * FROM badges WHERE id=?', badgeId)
+  if (!b) throw new Error('证件不存在')
+  const inc = get('SELECT code FROM incidents WHERE id=?', incidentId)
+  if (!inc) throw new Error('安全事件不存在')
+  const hadHold = !!b.hold_incident_id || (b.block_reason || '').includes(`（${inc.code}）`)
+  // 仅当该停用确由本事件暂扣造成（暂扣原因带本事件编号）时清除人工暂扣标记；
+  // 若证件在本事件前已被独立人工暂扣（原因不含本事件编号），保留该人工管控，只解除事件溯源。
+  const ownedByThis = (b.block_reason || '').includes(`（${inc.code}）`)
+  if (ownedByThis) run(`UPDATE badges SET block_manual=0, block_reason=NULL WHERE id=?`, badgeId)
+  run(`UPDATE badges SET hold_incident_id=NULL, held_at=NULL WHERE id=?`, badgeId)
+  // 解除事件暂扣后按实时资格重新判定（资格失效仍保持停用）
+  syncBadge(b.subject_type, b.subject_id, actor.name, false)
+  const fresh = get('SELECT * FROM badges WHERE id=?', badgeId)
+  if (hadHold) {
+    addIncidentLog(incidentId, 'badge_release',
+      `证件 ${b.code}（${b.name}）解除事件暂扣，按当前资格判定为${fresh.status === 'active' ? '有效' : '停用（资格未生效）'}`, actor, { badge_id: badgeId })
+    addAccessLog('unblock', badgeId, b.code, `安全事件 ${inc.code} 解除暂扣证件（${b.name}）`, reason || null, `${actor.name}（安全事件）`, 'info', null, null)
+  }
+  return { ok: true, status: fresh.status }
+}
+
+// 暂停场次（仅待赛场次；已暂停幂等）。暂停后入场核验拒绝、成绩录入拦截
+function pauseMatchForIncident(incidentId, matchId, reason, actor) {
+  const inc = get('SELECT code,title FROM incidents WHERE id=?', incidentId)
+  if (!inc) throw new Error('安全事件不存在')
+  const m = get('SELECT * FROM matches WHERE id=?', matchId)
+  if (!m) throw new Error('场次不存在')
+  if (m.status !== 'scheduled') throw new Error('仅待赛场次可暂停（完赛/已取消场次无需暂停）')
+  const fullReason = reason || `安全事件 ${inc.code} 暂停`
+  if (m.is_paused) {
+    if (m.paused_incident_id === incidentId) return { ok: true, idempotent: true }
+    throw new Error(`该场次已被安全事件 #${m.paused_incident_id} 暂停，请先恢复后再操作`)
+  }
+  run(`UPDATE matches SET is_paused=1, paused_at=datetime('now','localtime'), paused_incident_id=?, pause_reason=? WHERE id=?`,
+    incidentId, fullReason, matchId)
+  addIncidentLog(incidentId, 'match_pause', `${matchTitle(m)} 暂停：${fullReason}（暂停期间禁止入场、不可录入比分）`, actor, { match_id: matchId })
+  addAccessLog('incident_pause', null, null, `安全事件 ${inc.code} 暂停场次：${matchTitle(m)}`, fullReason, `${actor.name}（安全事件）`, 'danger', matchId, m.venue_id)
+  return { ok: true }
+}
+// 恢复场次：清暂停标记，回到正常待赛；到场/到岗数据保留（暂停前已核验继续有效）
+function resumeMatchForIncident(incidentId, matchId, note, actor) {
+  const inc = get('SELECT code FROM incidents WHERE id=?', incidentId)
+  if (!inc) throw new Error('安全事件不存在')
+  const m = get('SELECT * FROM matches WHERE id=?', matchId)
+  if (!m) throw new Error('场次不存在')
+  if (!m.is_paused) return { ok: true, idempotent: true }
+  run(`UPDATE matches SET is_paused=0, resumed_at=datetime('now','localtime'), paused_incident_id=NULL,
+      pause_reason=NULL, reschedule_note=? WHERE id=?`, note ? `${inc.code} 恢复：${note}` : null, matchId)
+  addIncidentLog(incidentId, 'match_resume', `${matchTitle(m)} 恢复正常待赛${note ? '：' + note : ''}（到场/到岗核验数据保留）`, actor, { match_id: matchId })
+  addAccessLog('incident_resume', null, null, `安全事件 ${inc.code} 恢复场次：${matchTitle(m)}`, note || null, `${actor.name}（安全事件）`, 'info', matchId, m.venue_id)
+  return { ok: true }
+}
+// 暂停改期：先解除暂停态再改时间/场地（复用既有改期事务：冲突检测/自动重排执法/原子回滚），
+// 改期后场次保持"暂停改期已生效"的可入场待赛状态；若改期回滚则暂停态保持，事件不受影响。
+function rescheduleMatchForIncident(incidentId, matchId, body, actor) {
+  const inc = get('SELECT * FROM incidents WHERE id=?', incidentId)
+  if (!inc) throw new Error('安全事件不存在')
+  const m = get('SELECT * FROM matches WHERE id=?', matchId)
+  if (!m) throw new Error('场次不存在')
+  if (m.status !== 'scheduled') throw new Error('仅待赛场次可暂停改期')
+  const reasonText = `${inc.code} 安全事件暂停改期${body.reason ? '：' + String(body.reason).trim() : ''}`
+  // 场地留空（"不更换"）时保持原场地，仅改时间
+  const venueArg = (body.venue_id === null || body.venue_id === undefined || body.venue_id === '') ? undefined : body.venue_id
+  const r = updateMatchSchedule(matchId, {
+    time_label: body.time_label, venue_id: venueArg,
+    operator: `${actor.name}（安全事件）`, reason: reasonText,
+    force: !!body.force, auto_rearrange: body.auto_rearrange !== false
+  })
+  // updateMatchSchedule 成功（含 unchanged）后解除暂停态，场次按新档期正常待赛
+  run(`UPDATE matches SET is_paused=0, resumed_at=datetime('now','localtime'), paused_incident_id=NULL,
+      pause_reason=NULL, reschedule_note=? WHERE id=?`, reasonText, matchId)
+  const fresh = get('SELECT * FROM matches WHERE id=?', matchId)
+  addIncidentLog(incidentId, 'match_reschedule',
+    `${matchTitle(fresh)} 暂停改期完成，新档期 ${fresh.time_label || '未指定'} / ${fresh.venue_id ? get('SELECT name FROM venues WHERE id=?', fresh.venue_id)?.name : '未指定'}`,
+    actor, { match_id: matchId, snapshot: { rearranged: r.rearranged || [], auto_filled: r.auto_filled || [] } })
+  addAccessLog('incident_reschedule', null, null, `安全事件 ${inc.code} 场次暂停改期：${matchTitle(fresh)}（${fresh.time_label || '时间待定'}）`, reasonText, `${actor.name}（安全事件）`, 'warn', matchId, fresh.venue_id)
+  return { ok: true, ...r }
+}
+
+// 分级（仅组委会）：reported/triaged 可补改分级；分级后进入处置中
+function triageIncident(incidentId, body) {
+  return withTransaction(() => {
+    const actor = incidentActor(body)
+    if (actor.role !== 'committee') throw new Error('仅组委会可对事件分级')
+    const inc = get('SELECT * FROM incidents WHERE id=?', incidentId)
+    if (!inc) throw new Error('安全事件不存在')
+    if (inc.status === 'closed') throw new Error('事件已结案，不能再分级（如需跟进请重新开启）')
+    const severity = body.severity
+    if (!INCIDENT_SEVERITY_META[severity]) throw new Error('请选择事件级别（一般/较大/重大）')
+    const note = (body.triage_note || '').trim()
+    if (!note) throw new Error('请填写分级研判意见')
+    const regrade = !!inc.severity
+    run(`UPDATE incidents SET severity=?, status='triaged', triaged_at=COALESCE(triaged_at, datetime('now','localtime')),
+        triage_role=?, triage_name=?, triage_note=? WHERE id=?`,
+      severity, actor.role, actor.name, note, incidentId)
+    const sv = INCIDENT_SEVERITY_META[severity]
+    addIncidentLog(incidentId, 'triage',
+      `${actor.name}（组委会）${regrade ? '调整' : ''}分级为 ${sv.icon}${sv.text}事件：${note}`, actor)
+    return { ok: true }
+  })
+}
+// 处置进展（四方均可）：必须填写处置内容；可同步更新事件状态（处置中/已解决）
+function handleIncident(incidentId, body) {
+  return withTransaction(() => {
+    const actor = incidentActor(body)
+    const inc = get('SELECT * FROM incidents WHERE id=?', incidentId)
+    if (!inc) throw new Error('安全事件不存在')
+    if (!INCIDENT_ACTIVE.has(inc.status)) throw new Error('事件已结案，请先重新开启再补充处置')
+    const content = (body.content || '').trim()
+    if (!content) throw new Error('请填写处置进展内容')
+    // 未分级事件：医疗/安保/裁判只能记录进展，不能越过组委会分级
+    let newStatus = inc.status
+    if (body.status === 'resolved') {
+      if (!inc.severity) throw new Error('事件尚未分级，请等待组委会分级后再标记解决')
+      newStatus = 'resolved'
+    } else if (body.status === 'handling') {
+      // 组委会可"分级即处置中"，其余角色在已分级后记录进展保持 triaged/handling
+      newStatus = inc.severity ? 'handling' : inc.status
+    }
+    if (newStatus !== inc.status) {
+      run(`UPDATE incidents SET status=? WHERE id=?`, newStatus, incidentId)
+    }
+    addIncidentLog(incidentId, 'handle', `${actor.name}（${INCIDENT_ROLE_NAME[actor.role]}）处置：${content}`, actor)
+    if (newStatus === 'resolved' && inc.status !== 'resolved') {
+      addIncidentLog(incidentId, 'resolve', `事件已解决，等待组委会确认结案`, actor)
+    }
+    return { ok: true, status: newStatus }
+  })
+}
+// 结案（仅组委会）：必须已分级且已解决；仍有暂停未恢复/未改期场次或事件暂扣未解除证件时拦截，
+// 可选择随结案一并解除暂扣证件；结案后可重新开启（回到处置中）。
+function closeIncident(incidentId, body) {
+  return withTransaction(() => {
+    const actor = incidentActor(body)
+    if (actor.role !== 'committee') throw new Error('仅组委会可结案')
+    const inc = get('SELECT * FROM incidents WHERE id=?', incidentId)
+    if (!inc) throw new Error('安全事件不存在')
+    if (inc.status === 'closed') return { ok: true, idempotent: true }
+    if (!inc.severity) throw new Error('事件尚未分级，不能结案')
+    if (inc.status !== 'resolved') throw new Error('请先标记事件已解决，再由组委会结案')
+    const paused = all(`SELECT id FROM matches WHERE paused_incident_id=? AND is_paused=1`, incidentId)
+    if (paused.length) {
+      throw new Error(`仍有 ${paused.length} 个场次处于暂停状态，请先恢复或改期后再结案`)
+    }
+    const held = all(`SELECT id,code,name FROM badges WHERE hold_incident_id=?`, incidentId)
+    if (held.length && !body.release_badges) {
+      throw new Error(`仍有 ${held.length} 张证件因本事件暂扣，请确认随结案解除，或先逐张处置`)
+    }
+    const resolution = (body.resolution || '').trim()
+    if (!resolution) throw new Error('请填写结案总结（处置结果与后续防范）')
+    run(`UPDATE incidents SET status='closed', closed_at=datetime('now','localtime'),
+        close_role=?, close_name=?, resolution=? WHERE id=?`, actor.role, actor.name, resolution, incidentId)
+    // 随结案解除事件暂扣证件（按实时资格重新判定）
+    const released = []
+    if (body.release_badges) {
+      held.forEach(b => {
+        const rr = releaseBadgeForIncident(incidentId, b.id, `随 ${inc.code} 结案解除暂扣`, actor)
+        released.push({ badge_id: b.id, code: b.code, status: rr.status })
+      })
+    }
+    addIncidentLog(incidentId, 'close', `${actor.name}（组委会）结案：${resolution}${released.length ? `；随案解除暂扣证件 ${released.length} 张` : ''}`,
+      actor, { snapshot: { released_badges: released } })
+    return { ok: true, released_badges: released }
+  })
+}
+// 重新开启（仅组委会）：结案后发现遗留问题，回到处置中
+function reopenIncident(incidentId, body) {
+  return withTransaction(() => {
+    const actor = incidentActor(body)
+    if (actor.role !== 'committee') throw new Error('仅组委会可重新开启事件')
+    const inc = get('SELECT * FROM incidents WHERE id=?', incidentId)
+    if (!inc) throw new Error('安全事件不存在')
+    if (inc.status !== 'closed') return { ok: true, idempotent: true }
+    const note = (body.note || '').trim()
+    run(`UPDATE incidents SET status='handling', closed_at=NULL, close_role=NULL, close_name=NULL WHERE id=?`, incidentId)
+    addIncidentLog(incidentId, 'reopen', `${actor.name}（组委会）重新开启事件${note ? '：' + note : ''}`, actor)
+    return { ok: true }
+  })
+}
+// 事件聚合：关联场次暂停态、暂扣证件、处置时间线
+function joinIncident(inc) {
+  const sport = inc.sport_id ? get('SELECT id,name,format,category FROM sports WHERE id=?', inc.sport_id) : null
+  const venue = inc.venue_id ? get('SELECT id,name FROM venues WHERE id=?', inc.venue_id) : null
+  const match = inc.match_id ? get('SELECT * FROM matches WHERE id=?', inc.match_id) : null
+  const paused_matches = all(`SELECT id,time_label,venue_id,is_paused,pause_reason,reschedule_note FROM matches
+                              WHERE paused_incident_id=? AND is_paused=1`, inc.id)
+  const held_badges = all(`SELECT id,code,name,subject_type,status,block_reason FROM badges WHERE hold_incident_id=?`, inc.id)
+  const logs = all(`SELECT * FROM incident_logs WHERE incident_id=? ORDER BY id`, inc.id)
+  return {
+    ...inc,
+    sport, venue,
+    match: match ? { ...joinMatch(match) } : null,
+    paused_matches: paused_matches.map(m => ({
+      ...m,
+      venue_name: m.venue_id ? get('SELECT name FROM venues WHERE id=?', m.venue_id)?.name : null,
+      title: matchTitle(get('SELECT * FROM matches WHERE id=?', m.id))
+    })),
+    held_badges,
+    logs
+  }
+}
+function incidentStats(rows) {
+  const c = { reported: 0, triaged: 0, handling: 0, resolved: 0, closed: 0, open: 0 }
+  const sev = { high: 0, medium: 0, low: 0 }
+  const pausedMatches = new Set()
+  let heldBadges = 0
+  rows.forEach(i => {
+    c[i.status] = (c[i.status] || 0) + 1
+    if (INCIDENT_ACTIVE.has(i.status)) c.open++
+    if (i.severity) sev[i.severity]++
+    ;(i.paused_matches || []).forEach(m => pausedMatches.add(m.id))
+    heldBadges += (i.held_badges || []).length
+  })
+  return { counts: c, severity: sev, paused_matches: pausedMatches.size, held_badges: heldBadges }
+}
+
 /* ================= 历史赛程统计修复 ================= */
 // 校正并发审核/重排在历史数据中遗留的失真，让积分榜与奖牌榜回到权威赛果口径：
 // 1) 循环赛重复对阵场次去重（并发重排可能重复插场）：保留最早有效场，多余场解除执法并作废留痕
@@ -2465,6 +2872,72 @@ app.post('/api/appeals/:id/uphold', (req, res) => {
     res.json(r)
   } catch (e) { res.status(400).json({ error: e.message }) }
 })
+/* —— 赛事安全事件处置：四方协同上报/分级/处置/结案，联动证件暂扣、场次暂停改期、异常审计 —— */
+app.get('/api/incidents', (_, res) => {
+  res.json(all('SELECT * FROM incidents ORDER BY id DESC').map(joinIncident))
+})
+app.post('/api/incidents', (req, res) => {
+  try { res.json(submitIncident(req.body || {})) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/triage', (req, res) => {
+  try { res.json(triageIncident(Number(req.params.id), req.body || {})) }
+  catch (e) { res.status(e.message.includes('仅组委会') ? 403 : 400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/handle', (req, res) => {
+  try { res.json(handleIncident(Number(req.params.id), req.body || {})) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/close', (req, res) => {
+  try { res.json(closeIncident(Number(req.params.id), req.body || {})) }
+  catch (e) { res.status(e.message.includes('仅组委会') ? 403 : 400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/reopen', (req, res) => {
+  try { res.json(reopenIncident(Number(req.params.id), req.body || {})) }
+  catch (e) { res.status(e.message.includes('仅组委会') ? 403 : 400).json({ error: e.message }) }
+})
+// 事件联动：证件暂扣 / 解除
+app.post('/api/incidents/:id/badges/:badgeId/hold', (req, res) => {
+  try {
+    const actor = incidentActor(req.body || {})
+    res.json(withTransaction(() => holdBadgeForIncident(Number(req.params.id), Number(req.params.badgeId), req.body.reason, actor)))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/badges/:badgeId/release', (req, res) => {
+  try {
+    const actor = incidentActor(req.body || {})
+    res.json(withTransaction(() => releaseBadgeForIncident(Number(req.params.id), Number(req.params.badgeId), req.body.reason, actor)))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+// 事件联动：场次暂停 / 恢复 / 暂停改期
+app.post('/api/incidents/:id/matches/:matchId/pause', (req, res) => {
+  try {
+    const actor = incidentActor(req.body || {})
+    res.json(withTransaction(() => pauseMatchForIncident(Number(req.params.id), Number(req.params.matchId), req.body.reason, actor)))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/matches/:matchId/resume', (req, res) => {
+  try {
+    const actor = incidentActor(req.body || {})
+    res.json(withTransaction(() => resumeMatchForIncident(Number(req.params.id), Number(req.params.matchId), req.body.note, actor)))
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+app.post('/api/incidents/:id/matches/:matchId/reschedule', (req, res) => {
+  try {
+    const actor = incidentActor(req.body || {})
+    const r = withTransaction(() => rescheduleMatchForIncident(Number(req.params.id), Number(req.params.matchId), req.body || {}, actor))
+    res.json({ ok: true, ...r })
+  } catch (e) {
+    res.status(e.code === 'CONFLICT' ? 409 : 400).json({ error: e.message, code: e.code, conflicts: e.conflicts })
+  }
+})
+app.get('/api/incident-logs', (req, res) => {
+  const limit = Math.min(300, Number(req.query.limit) || 120)
+  res.json(all(`SELECT l.*, i.code incident_code, i.title incident_title
+                FROM incident_logs l JOIN incidents i ON i.id=l.incident_id
+                ORDER BY l.id DESC LIMIT ?`, limit))
+})
+
 /* —— 赛事证件与入场核验 —— */
 const joinBadge = b => {
   let subject = null, unit = null
@@ -2595,6 +3068,22 @@ app.get('/api/overview', (_, res) => {
       reviewing: get(`SELECT COUNT(*) c FROM appeals WHERE status='reviewing'`)?.c || 0,
       upheld: get(`SELECT COUNT(*) c FROM appeals WHERE status='upheld'`)?.c || 0
     },
+    // 安全事件处置速览：待分级/处置中/已解决待结案、暂停中场次、事件暂扣证件
+    incidents: (() => {
+      const rows = all('SELECT * FROM incidents').map(joinIncident)
+      const s = incidentStats(rows)
+      return {
+        total: rows.length,
+        reported: s.counts.reported,
+        triaged: s.counts.triaged + s.counts.handling,
+        resolved: s.counts.resolved,
+        closed: s.counts.closed,
+        open: s.counts.open,
+        high_open: rows.filter(i => INCIDENT_ACTIVE.has(i.status) && i.severity === 'high').length,
+        paused_matches: s.paused_matches,
+        held_badges: s.held_badges
+      }
+    })(),
     // 证件与入场核验速览：发证规模、当日核验、异常拦截、双方到场/执法到岗准备度
     access: (() => {
       const today = get("SELECT date('now','localtime') d")?.d
@@ -2665,7 +3154,7 @@ app.post('/api/track/:sportId', (req, res) => {
 app.get('/api/reset', (_, res) => {
   // 单事务重置 + 重置后立即执行历史统计修复，保证演示数据口径一致
   withTransaction(() => {
-    ['access_checkins', 'access_logs', 'badges', 'venue_staff', 'appeal_logs', 'appeals', 'assignment_logs', 'assignments', 'registrations', 'entries', 'standings', 'medals', 'matches', 'referees', 'venues', 'athletes', 'teams', 'units', 'sports'].forEach(t => { try { run(`DELETE FROM ${t}`) } catch (e) {} })
+    ['access_checkins', 'access_logs', 'badges', 'venue_staff', 'incident_logs', 'incidents', 'appeal_logs', 'appeals', 'assignment_logs', 'assignments', 'registrations', 'entries', 'standings', 'medals', 'matches', 'referees', 'venues', 'athletes', 'teams', 'units', 'sports'].forEach(t => { try { run(`DELETE FROM ${t}`) } catch (e) {} })
     seed()
     repairHistoricalStats('系统')
   })
